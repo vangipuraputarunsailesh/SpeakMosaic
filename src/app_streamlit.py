@@ -10,7 +10,6 @@ import speech_recognition as sr
 from googletrans import LANGUAGES, Translator
 import requests
 import time
-from st_audiorec import st_audiorec  # For live audio recording
 from google.cloud import texttospeech
 
 # --- Visitor Counter (for demo/analytics) ---
@@ -246,13 +245,14 @@ st.markdown('''</div>''', unsafe_allow_html=True)
 
 # --- VOICE TO TEXT SECTION ---
 st.markdown("""
-    <div class="section-container">
-        <h2 style="color: #333; margin-bottom: 1rem;">🎤 Voice to Text Conversion</h2>
-        <div class="info-box">
-            <strong>How it works:</strong> Click the microphone button below, speak clearly, and the app will convert your speech to text. You can speak in any language and it will be translated to your selected language.
+    <div class="section-card">
+        <div class="section-container">
+            <h2 style="color: #333; margin-bottom: 1rem;">🎤 Voice to Text Conversion <span title='Convert your voice to text by uploading a WAV file.' style='cursor:help;'>ℹ️</span></h2>
+            <div class="info-box">
+                <strong>How it works:</strong> Upload a WAV audio file below, and the app will convert your speech to text. You can speak in any language and it will be translated to your selected language.
+            </div>
         </div>
-    </div>
-""", unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
 # --- VOICE TO TEXT STATE MANAGEMENT ---
 if 'recognized_text' not in st.session_state:
@@ -268,15 +268,14 @@ if lang_code not in SUPPORTED_LANGS:
         </div>
     """, unsafe_allow_html=True)
 
-st.markdown("### 🎙️ Start Recording")
-wav_audio_data = st_audiorec()
-
-if wav_audio_data is not None:
-    st.markdown("### 🎧 Your Recording")
-    st.audio(wav_audio_data, format='audio/wav')
+# --- File Uploader for Audio ---
+audio_file = st.file_uploader("Upload a WAV file for speech recognition", type=["wav"])
+if audio_file is not None:
+    st.markdown("### 🎧 Your Uploaded Audio")
+    st.audio(audio_file, format='audio/wav')
     recognizer = sr.Recognizer()
     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-        tmp.write(wav_audio_data)
+        tmp.write(audio_file.read())
         tmp_path = tmp.name
     with st.spinner("🔄 Processing your speech..."):
         try:
