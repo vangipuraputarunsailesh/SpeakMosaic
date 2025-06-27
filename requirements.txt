@@ -4,4 +4,3 @@ gtts
 speechrecognition
 googletrans==4.0.0rc1
 requests
-streamlit-audio-recorder
