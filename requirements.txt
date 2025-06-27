@@ -1,0 +1,7 @@
+streamlit
+google-cloud-texttospeech
+gtts
+speechrecognition
+googletrans==4.0.0rc1
+requests
+st-audiorec
