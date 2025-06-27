@@ -1,226 +1,356 @@
+# SpeakMosaic: Multilingual Voice Assistant Web App
+# This app lets users convert speech to text, text to speech, and translate between languages.
+# It uses Streamlit for the UI, Google APIs for speech/translation, and supports live mic recording with st_audiorec.
+
 import streamlit as st
 import tempfile
 import os
 from gtts import gTTS
 import speech_recognition as sr
 from googletrans import LANGUAGES, Translator
-from streamlit_mic_recorder import mic_recorder
 import requests
-try:
-    from streamlit_lottie import st_lottie
-except ImportError:
-    st_lottie = None
-    st.warning("streamlit-lottie is not installed. Run 'pip install streamlit-lottie' for animated icons.")
-# from PIL import Image  # Not used
+import time
+from st_audiorec import st_audiorec  # For live audio recording
+from google.cloud import texttospeech
 
-# --- Config Section ---
+# --- Visitor Counter (for demo/analytics) ---
+if 'counter' not in st.session_state:
+    st.session_state['counter'] = 0
+st.session_state['counter'] += 1
+
+# --- App Configuration ---
 APP_NAME = "SpeakMosaic"
-TAGLINE = "Your Multilingual Voice Assistant"
+TAGLINE = " Multilingual Voice Assistant"
 LOGO_URL = "https://cdn-icons-png.flaticon.com/512/3062/3062634.png"  # Example logo
 SOCIAL_LINKS = "<a href='https://github.com/' target='_blank'>GitHub</a> | <a href='https://linkedin.com/' target='_blank'>LinkedIn</a>"
 THEME_COLOR = "#6C63FF"
 
 # --- Helper Functions ---
-def load_lottieurl(url: str):
-    r = requests.get(url)
-    if r.status_code != 200:
-        return None
-    return r.json()
-
 def copy_to_clipboard(text):
     st.code(text, language=None)
     st.success("Copied to clipboard! (Select and copy manually)")
 
-def show_onboarding():
-    st.session_state['onboarded'] = True
-    st.info("""
-    **How to use SpeakMosaic:**
-    1. Select or auto-detect your language (with flag!)
-    2. Click the mic to record, or type text below
-    3. Convert speech to text, or text to speech
-    4. Download, copy, or share results
-    5. Try advanced features in the main app!
-    """)
-
-# --- Custom CSS for a dark background and cleaner look ---
-st.markdown(f"""
+# --- Professional CSS Styling ---
+st.markdown('''
+    <link href="https://fonts.googleapis.com/css?family=Inter:400,700&display=swap" rel="stylesheet">
     <style>
-        .main {{background-color: #fff;}}
-        .block-container {{padding-top: 2rem; background-color: #fff;}}
-        .stApp {{background-color: #fff;}}
-        .stButton>button {{
-            width: 100%;
-            border-radius: 8px;
-            font-size: 1.1rem;
-            padding: 0.5em 0;
-            background-color: {THEME_COLOR};
-            color: white;
-        }}
-        .stTextArea textarea {{
-            border-radius: 10px;
-            min-height: 100px;
-            font-size: 1.1rem;
-            background-color: #fff;
-            color: #222;
-        }}
-        .stAudio {{margin-top: 1em;}}
-        .stDownloadButton {{margin-top: 0.5em;}}
-        .stSelectbox {{margin-bottom: 1em; background-color: #fff; color: #222;}}
-        .stCodeBlock {{background: #f8f9fa; border-radius: 8px; color: #222;}}
-        .logo-img {{display: block; margin-left: auto; margin-right: auto; width: 60px;}}
-        h1, h2, h3, h4, h5, h6, label, .stMarkdown, .stCaption, .stText, .stSubheader, .stSidebar, .stSidebarContent, .stSidebar .sidebar-content, .stSidebar .sidebar-content *, .css-1v0mbdj, .css-1d391kg, .css-1offfwp, .css-1kyxreq, .css-1dp5vir, .css-1v3fvcr, .css-1c7y2kd, .css-1vzeuhh, .css-1vzeuhh *, .css-1c7y2kd * {{
-            color: #222 !important;
-        }}
-        /* Sidebar background */
-        section[data-testid="stSidebar"] {{
-            background-color: #fff !important;
-        }}
+        html, body, [class*="css"]  { font-family: 'Inter', sans-serif; }
+        h1, h2, h3, h4 { font-weight: 700; }
+        .main {background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh;}
+        .block-container {background: rgba(255,255,255,0.97); border-radius: 20px; padding: 2rem; margin: 1rem; box-shadow: 0 8px 32px rgba(0,0,0,0.1);}
+        .header-container {text-align: center; padding: 2rem 0; background: linear-gradient(135deg, #6C63FF, #8B5CF6); border-radius: 15px; margin-bottom: 2rem; color: white;}
+        .section-card {box-shadow:0 4px 24px rgba(0,0,0,0.08); border-radius:18px; padding:2rem; margin-bottom:2.5rem; background:white;}
+        .stButton > button {background: linear-gradient(135deg, #6C63FF, #8B5CF6); color: white; border: none; border-radius: 10px; padding: 0.75rem 2rem; font-weight: 600; transition: background 0.3s, transform 0.2s; box-shadow: 0 4px 15px rgba(108,99,255,0.3);}
+        .stButton > button:hover {transform: scale(1.04); box-shadow: 0 6px 20px rgba(108,99,255,0.4);}
+        .stTextArea textarea {border-radius: 10px; border: 2px solid #e1e5e9; padding: 1rem; font-size: 1rem; transition: border-color 0.3s ease;}
+        .stTextArea textarea:focus {border-color: #6C63FF; box-shadow: 0 0 0 3px rgba(108,99,255,0.1);}
+        .stSelectbox {border-radius: 10px;}
+        .info-box {background: linear-gradient(135deg, #E3F2FD, #BBDEFB); border-left: 4px solid #2196F3; padding: 1rem; border-radius: 8px; margin: 1rem 0;}
+        .success-box {background: linear-gradient(135deg, #E8F5E8, #C8E6C9); border-left: 4px solid #4CAF50; padding: 1rem; border-radius: 8px; margin: 1rem 0;}
+        .feature-card {background: white; border-radius: 12px; padding: 1.5rem; margin: 1rem 0; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border: 1px solid #e1e5e9;}
+        .darkmode-toggle {position: fixed; top: 1.5rem; right: 2.5rem; z-index: 999;}
+        @media (max-width: 768px) {.block-container {margin: 0.5rem; padding: 1rem;}}
     </style>
+''', unsafe_allow_html=True)
+
+# --- Sidebar: Professional Navigation ---
+st.sidebar.markdown(f"""
+    <div style="text-align: center; padding: 1rem;">
+        <img src="{LOGO_URL}" width="60" style="border-radius: 50%;">
+        <h3 style="color: {THEME_COLOR}; margin: 1rem 0;">{APP_NAME}</h3>
+    </div>
 """, unsafe_allow_html=True)
 
-# --- Sidebar: History, Theme, Onboarding ---
-st.sidebar.image(LOGO_URL, width=60)
-st.sidebar.title(f"🗂️ Menu")
-if st.sidebar.button("How to Use?", help="Show onboarding guide"):
-    show_onboarding()
-
-# Font size adjuster
-font_size = st.sidebar.slider("Font Size", 12, 32, 18)
-st.markdown(f"<style>body, .stTextArea textarea, .stButton>button, .stSelectbox, .stCodeBlock {{font-size: {font_size}px !important;}}</style>", unsafe_allow_html=True)
-
-# History (simple session state)
+st.sidebar.markdown("---")
+font_size = st.sidebar.slider("📏 Font Size", 12, 32, 18)
+st.markdown(f"<style>body, .stTextArea textarea, .stButton>button, .stSelectbox {{font-size: {font_size}px !important;}}</style>", unsafe_allow_html=True)
 if 'history' not in st.session_state:
     st.session_state['history'] = []
-if 'onboarded' not in st.session_state:
-    st.session_state['onboarded'] = False
-st.sidebar.markdown("---")
-st.sidebar.subheader("🕑 Recent Activity")
+st.sidebar.markdown("### 📋 Recent Activity")
 for i, item in enumerate(reversed(st.session_state['history'][-5:])):
-    st.sidebar.write(f"{item}")
+    st.sidebar.markdown(f"• {item}")
 
-# --- Page Setup ---
-st.set_page_config(page_title=APP_NAME, layout="centered", page_icon=LOGO_URL)
+# --- Main Page Setup ---
+st.set_page_config(page_title=APP_NAME, layout="wide", page_icon=LOGO_URL)
 
-# --- Welcome Section ---
-st.image(LOGO_URL, width=80)
-st.markdown(f"<h1 style='text-align:center; color:{THEME_COLOR};'>{APP_NAME}</h1>", unsafe_allow_html=True)
-st.markdown(f"<h3 style='text-align:center; color:#444;'>{TAGLINE}</h3>", unsafe_allow_html=True)
-if not st.session_state['onboarded']:
-    show_onboarding()
-st.markdown("---")
+# Dark mode toggle
+if 'dark_mode' not in st.session_state:
+    st.session_state['dark_mode'] = False
+with st.sidebar:
+    st.markdown("<div style='margin-bottom:1rem;'></div>", unsafe_allow_html=True)
+    dark_mode_toggle = st.checkbox("🌙 Dark Mode", value=st.session_state['dark_mode'])
+    st.session_state['dark_mode'] = dark_mode_toggle
+if st.session_state['dark_mode']:
+    st.markdown('''<style>body, .block-container, .section-card {background: #23272f !important; color: #f3f3f3 !important;} .stTextArea textarea, .stSelectbox, .stButton > button {background: #23272f !important; color: #f3f3f3 !important;}</style>''', unsafe_allow_html=True)
 
-# --- Language Selection without Flags or Globe Symbols ---
+# --- Main Page Setup ---
+st.markdown(f"""
+    <div class="header-container">
+        <img src="{LOGO_URL}" width="80" style="border-radius: 50%; margin-bottom: 1rem;">
+        <h1 style="margin: 0; font-size: 3rem; font-weight: 700;">{APP_NAME}</h1>
+        <h3 style="margin: 0.5rem 0; opacity: 0.9;">{TAGLINE}</h3>
+        <p style="margin: 0; opacity: 0.8;">Transform your voice into text and text into voice across multiple languages</p>
+    </div>
+""", unsafe_allow_html=True)
+
+# --- Language Selection ---
+st.markdown("""
+    <div class="section-container">
+        <h2 style="color: #333; margin-bottom: 1rem;">🌐 Language Settings</h2>
+        <p style="color: #666; margin-bottom: 1rem;">Choose your preferred language for both voice recognition and text-to-speech conversion</p>
+    </div>
+""", unsafe_allow_html=True)
 LANGUAGES_DISPLAY = {name.title(): code for code, name in LANGUAGES.items()}
 language_names = sorted(LANGUAGES_DISPLAY.keys())
-col_lang, col_switch = st.columns([4, 1])
+col_lang, col_switch, col_auto = st.columns([3, 1, 2])
 with col_lang:
     selected_language = st.selectbox(
-        "🌐 Choose a language",
-        language_names,  # Only show language names, no flags or globe
+        "**Select Language**",
+        language_names,
         index=language_names.index("English"),
-        help="Select the language for recognition and speech."
+        help="Choose the language for recognition and speech synthesis"
     )
     lang_code = LANGUAGES_DISPLAY[selected_language]
 with col_switch:
+    st.markdown("<br>", unsafe_allow_html=True)
     if st.button("🔄 Swap", help="Quick switch to previous language"):
         if 'last_lang' in st.session_state:
             lang_code, st.session_state['last_lang'] = st.session_state['last_lang'], lang_code
     st.session_state['last_lang'] = lang_code
+with col_auto:
+    st.markdown("<br>", unsafe_allow_html=True)
+    auto_detect = st.checkbox("Auto-detect speech language", value=False, help="Let the app automatically detect the language you're speaking")
+st.session_state['selected_language'] = selected_language
+st.session_state['lang_code'] = lang_code
 
-auto_detect = st.checkbox("Auto-detect language (for speech)", value=False, help="Let the app auto-detect spoken language.")
+# --- TEXT TO VOICE SECTION ---
+st.markdown('''<div class="section-card">''', unsafe_allow_html=True)
+st.markdown("""
+    <div class="section-container">
+        <h2 style="color: #333; margin-bottom: 1rem;">🔊 Text to Voice Conversion <span title='Convert your text to speech in any language.' style='cursor:help;'>ℹ️</span></h2>
+        <div class="info-box">
+            <strong>How it works:</strong> Type or paste your text below, select your target language, and click "Convert to Speech" to hear it spoken aloud. The app will automatically translate your text if needed.
+        </div>
+    </div>
+""", unsafe_allow_html=True)
 
-# --- Speak Now Section ---
-st.subheader("🎤 Speak Now")
-audio_bytes = mic_recorder(start_prompt="🎙️ Start Recording", stop_prompt="⏹️ Stop Recording", key="recorder")
+# --- Voice Gender Selection ---
+st.markdown("""
+    <div style="margin-bottom: 1rem;">
+        <h4 style="margin-bottom: 0.5rem; color: #333;">🗣️ Voice Gender</h4>
+        <p style="margin-bottom: 0.5rem; color: #666;">Choose the gender of the voice for speech synthesis:</p>
+    </div>
+""", unsafe_allow_html=True)
+voice_gender = st.radio(
+    "",
+    ("👩 Female", "👨 Male"),
+    index=0,
+    horizontal=True,
+    help="Select the gender of the voice for speech synthesis"
+)
+if "Female" in voice_gender:
+    gender_enum = texttospeech.SsmlVoiceGender.FEMALE
+else:
+    gender_enum = texttospeech.SsmlVoiceGender.MALE
 
-text = ""
-if audio_bytes:
-    audio_data_bytes = None
-    if isinstance(audio_bytes, dict) and 'audio' in audio_bytes and isinstance(audio_bytes['audio'], bytes):
-        audio_data_bytes = audio_bytes['audio']
-    elif isinstance(audio_bytes, bytes):
-        audio_data_bytes = audio_bytes
-    else:
-        st.error("Unsupported audio format from mic_recorder. Please update the component or check your browser.")
-    if audio_data_bytes:
-        st.audio(audio_data_bytes, format="audio/wav")
-        recognizer = sr.Recognizer()
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-            tmp.write(audio_data_bytes)
-            tmp_path = tmp.name
-        with st.spinner("Transcribing audio..."):
-            try:
-                with sr.AudioFile(tmp_path) as source:
-                    audio_data = recognizer.record(source)
-                    recog_lang = None
-                    if auto_detect:
-                        recog_lang = "en-US"  # Default fallback
-                        text = recognizer.recognize_google(audio_data)  # type: ignore[attr-defined]  # Auto-detect
-                    else:
-                        recog_lang = lang_code
-                        text = recognizer.recognize_google(audio_data, language=lang_code)  # type: ignore[attr-defined]
-                    st.success("📝 Recognized Text:")
-                    st.write(f"<div style='background:#e9ecef;padding:10px;border-radius:8px'>{text}</div>", unsafe_allow_html=True)
-                    st.session_state['history'].append(f"🗣️ {text}")
-                    if st.button("📋 Copy Text", help="Copy recognized text to clipboard"):
-                        copy_to_clipboard(text)
-            except Exception as e:
-                st.error(f"❌ Could not recognize speech: {e}")
-                text = ""
-        os.remove(tmp_path)
+# --- TEXT TO VOICE STATE MANAGEMENT ---
+if 'user_input' not in st.session_state:
+    st.session_state['user_input'] = ""
 
-st.markdown("---")
-
-# --- Text to Voice Section ---
-st.subheader("🗣️ Convert Text to Speech")
-user_input = st.text_area("✍️ Enter text here to speak:", value=text, placeholder="Type or paste your text here...", help="Enter text to convert to speech.")
-
-col1, col2, col3 = st.columns([2, 1, 1])
+# --- TEXT TO VOICE BUTTONS (CLEAR LOGIC FIRST) ---
+col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
 with col1:
-    speak_btn = st.button("🔊 Speak", use_container_width=True, help="Convert text to speech.")
+    speak_btn = st.button("🎵 Convert to Speech", use_container_width=True, help="Convert your text to speech in the selected language")
 with col2:
-    clear_btn = st.button("🧹 Clear", use_container_width=True, help="Clear the text area.")
+    clear_btn = st.button("🧹 Clear", use_container_width=True, help="Clear the text area")
 with col3:
-    summarize_btn = st.button("📝 Summarize", use_container_width=True, help="Summarize the text (coming soon).")
+    copy_btn = st.button("📋 Copy", use_container_width=True, help="Copy the text to clipboard")
+with col4:
+    summarize_btn = st.button("📝 Summarize", use_container_width=True, help="Summarize the text (coming soon)")
 
 if clear_btn:
-    user_input = ""
-    st.experimental_rerun()
+    st.session_state['user_input'] = ""
+    st.rerun()
+
+user_input = st.text_area(
+    "**Enter your text here:**",
+    value=st.session_state['user_input'],
+    key="user_input",
+    placeholder="Type or paste the text you want to convert to speech...",
+    help="Enter any text you want to hear spoken aloud",
+    height=150
+)
+# --- Live Character Count ---
+user_input_str = user_input if user_input is not None else ""
+st.markdown(f"<small style='color:#888;'>{len(user_input_str)} characters</small>", unsafe_allow_html=True)
+
+if copy_btn and st.session_state['user_input']:
+    copy_to_clipboard(st.session_state['user_input'])
 
 if speak_btn:
-    if user_input:
-        translator = Translator()
-        with st.spinner("Translating and generating speech..."):
-            translated = translator.translate(user_input, dest=lang_code).text
-            st.markdown(f"<div style='background:#23272F;padding:10px;border-radius:8px;color:#fff'>**Translated Text:** {translated}</div>", unsafe_allow_html=True)
-            if st.button("📋 Copy Translation", help="Copy translated text to clipboard"):
-                copy_to_clipboard(translated)
-            try:
-                tts = gTTS(translated, lang=lang_code)
-                tts.save("output.mp3")
-                st.audio("output.mp3", format="audio/mp3")
-                with open("output.mp3", "rb") as f:
-                    st.download_button("⬇️ Download Audio", f, file_name="speech.mp3")
-                st.session_state['history'].append(f"🔊 {translated}")
-            except Exception as e:
-                st.error(f"TTS Error: {e}")
+    if st.session_state['user_input']:
+        try:
+            translator = Translator()
+            with st.spinner("🔄 Translating and generating speech..."):
+                translated = translator.translate(st.session_state['user_input'], dest=st.session_state['lang_code']).text
+                st.markdown(f"""
+                    <div class="success-box">
+                        <strong>✅ Translation Complete!</strong><br>
+                        <strong>Original:</strong> {st.session_state['user_input']}<br>
+                        <strong>Translated:</strong> {translated}
+                    </div>
+                """, unsafe_allow_html=True)
+                if st.button("📋 Copy Translation", help="Copy translated text to clipboard"):
+                    copy_to_clipboard(translated)
+                try:
+                    # --- Google Cloud TTS Integration ---
+                    client = texttospeech.TextToSpeechClient()
+                    synthesis_input = texttospeech.SynthesisInput(text=translated)
+                    voice = texttospeech.VoiceSelectionParams(
+                        language_code=st.session_state['lang_code'],
+                        ssml_gender=gender_enum
+                    )
+                    audio_config = texttospeech.AudioConfig(
+                        audio_encoding=texttospeech.AudioEncoding.MP3
+                    )
+                    response = client.synthesize_speech(
+                        input=synthesis_input,
+                        voice=voice,
+                        audio_config=audio_config
+                    )
+                    with open("output.mp3", "wb") as out:
+                        out.write(response.audio_content)
+                    st.markdown("### 🎧 Listen to Your Text")
+                    st.audio("output.mp3", format="audio/mp3")
+                    with open("output.mp3", "rb") as f:
+                        st.download_button(
+                            "⬇️ Download Audio File",
+                            f,
+                            file_name=f"speech_{st.session_state['lang_code']}.mp3",
+                            help="Download the generated audio file"
+                        )
+                    st.session_state['history'].append(f"🔊 Generated speech: {translated[:50]}...")
+                except Exception as e:
+                    st.error(f"❌ Speech generation failed: {e}")
+        except Exception as e:
+            st.error(f"❌ Translation failed: {e}")
     else:
-        st.warning("Please enter or record some text first.")
+        st.warning("⚠️ Please enter some text first!")
 
 if summarize_btn:
-    if user_input:
-        st.info("(Summarization feature coming soon! Connect to an LLM API like OpenAI or HuggingFace for this.)")
+    if st.session_state['user_input']:
+        st.info("📝 Summarization feature coming soon! This will use AI to create concise summaries of your text.")
     else:
-        st.warning("Please enter or record some text first.")
+        st.warning("⚠️ Please enter some text first!")
+st.markdown('''</div>''', unsafe_allow_html=True)
 
-# --- Recent Activity at Bottom ---
+# --- VOICE TO TEXT SECTION ---
+st.markdown("""
+    <div class="section-container">
+        <h2 style="color: #333; margin-bottom: 1rem;">🎤 Voice to Text Conversion</h2>
+        <div class="info-box">
+            <strong>How it works:</strong> Click the microphone button below, speak clearly, and the app will convert your speech to text. You can speak in any language and it will be translated to your selected language.
+        </div>
+    </div>
+""", unsafe_allow_html=True)
+
+# --- VOICE TO TEXT STATE MANAGEMENT ---
+if 'recognized_text' not in st.session_state:
+    st.session_state['recognized_text'] = ""
+
+SUPPORTED_LANGS = [
+    'af', 'ar', 'bg', 'bn', 'ca', 'cs', 'da', 'de', 'el', 'en', 'es', 'et', 'fa', 'fi', 'fr', 'gu', 'he', 'hi', 'hr', 'hu', 'id', 'it', 'ja', 'jw', 'km', 'kn', 'ko', 'la', 'lv', 'ml', 'mr', 'my', 'ne', 'nl', 'no', 'pl', 'pt', 'ro', 'ru', 'si', 'sk', 'sq', 'sr', 'su', 'sv', 'sw', 'ta', 'te', 'th', 'tl', 'tr', 'uk', 'ur', 'vi', 'zh-cn', 'zh-tw'
+]
+if lang_code not in SUPPORTED_LANGS:
+    st.markdown("""
+        <div style="background: #FFF3CD; border-left: 4px solid #FFC107; padding: 1rem; border-radius: 8px; margin: 1rem 0;">
+            ⚠️ <strong>Language Support Notice:</strong> The selected language may have limited support for speech recognition. Results may vary.
+        </div>
+    """, unsafe_allow_html=True)
+
+st.markdown("### 🎙️ Start Recording")
+wav_audio_data = st_audiorec()
+
+if wav_audio_data is not None:
+    st.markdown("### 🎧 Your Recording")
+    st.audio(wav_audio_data, format='audio/wav')
+    recognizer = sr.Recognizer()
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+        tmp.write(wav_audio_data)
+        tmp_path = tmp.name
+    with st.spinner("🔄 Processing your speech..."):
+        try:
+            with sr.AudioFile(tmp_path) as source:
+                audio_data = recognizer.record(source)
+                if auto_detect:
+                    recognized = recognizer.recognize_google(audio_data)
+                else:
+                    recognized = recognizer.recognize_google(audio_data, language=lang_code)
+                st.session_state['recognized_text'] = recognized
+                st.markdown(f"""
+                    <div class="success-box">
+                        <strong>✅ Speech Recognized Successfully!</strong><br>
+                        <strong>Original:</strong> {recognized}
+                    </div>
+                """, unsafe_allow_html=True)
+                # Always translate to the selected language if it's different from recognition language
+                if auto_detect or lang_code != "en":
+                    translator = Translator()
+                    translated_text = translator.translate(recognized, dest=lang_code).text
+                    st.markdown(f"""
+                        <div class="success-box">
+                            <strong>🌐 Translation:</strong> {translated_text}
+                        </div>
+                    """, unsafe_allow_html=True)
+                    st.session_state['recognized_text'] = translated_text
+                st.session_state['history'].append(f"🗣️ Recognized: {recognized[:50]}...")
+        except Exception as e:
+            st.error(f"❌ Could not recognize speech: {e}")
+        finally:
+            os.remove(tmp_path)
+
+# --- Recognized Text Editing and Transfer ---
+st.session_state['recognized_text'] = st.text_area(
+    "**Edit recognized text (optional):**",
+    value=st.session_state['recognized_text'],
+    key="edit_recognized_text",
+    placeholder="Recognized text will appear here after recording. You can edit it if needed.",
+    height=100
+)
+if st.button("✏️ Use for Text-to-Speech", key="use_for_tts"):
+    st.session_state['user_input'] = st.session_state['recognized_text']
+    st.experimental_rerun()
+
+# --- Recent Activity Section ---
+st.markdown("""
+    <div class="section-container">
+        <h2 style="color: #333; margin-bottom: 1rem;">📋 Recent Activity</h2>
+    </div>
+""", unsafe_allow_html=True)
+# Add Clear History button
+clear_history_btn = st.button("🧹 Clear History", help="Clear all recent activity from this session.")
+if clear_history_btn:
+    st.session_state['history'] = []
+    st.rerun()
+if st.session_state['history']:
+    for i, item in enumerate(reversed(st.session_state['history'][-10:])):
+        st.markdown(f"• {item}")
+else:
+    st.info("No recent activity. Start by converting some text or recording your voice!")
+
+# --- Professional Footer ---
 st.markdown("---")
-st.subheader("🕑 Recent Activity")
-for i, item in enumerate(reversed(st.session_state['history'][-5:])):
-    st.write(f"{item}")
+st.markdown(f"""
+    <div style="text-align: center; padding: 2rem; background: linear-gradient(135deg, #f8f9fa, #e9ecef); border-radius: 15px;">
+        <p style="margin: 0; color: #666;">
+            {SOCIAL_LINKS} | Made with ❤️ using Streamlit | © 2025 TarunSailesh | Enhanced by AI
+        </p>
+        <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem; color: #888;">
+            Visitor #{st.session_state['counter']} | Powered by Google Speech Recognition & Translation APIs
+        </p>
+    </div>
+""", unsafe_allow_html=True)
 
-# --- Footer ---
-st.markdown("---")
-st.markdown(f"<div style='text-align:center;'>{SOCIAL_LINKS}</div>", unsafe_allow_html=True)
-st.caption("Made with ❤️ using Streamlit | © 2025 TarunSailesh | Enhanced by AI")
-
+# Set Google Cloud credentials (update the path as needed for your local machine)
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = r"C:\Users\tarun\Downloads\speakmosaic-tts-sa.json"
+st.write("File exists:", os.path.exists(os.environ["GOOGLE_APPLICATION_CREDENTIALS"]))
